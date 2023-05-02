@@ -185,6 +185,18 @@ use the fdc debugger to further understand tunable FDC parameters:
   - `cd <SD>\repositories`
   - `git clone https://github.com/isl-org/MiDaS.git midas`
 
+⚪ Manual Linux install
+- install vid2vid extension
+  - `cd <SD>\extensions`
+  - `git clone https://github.com/Kahsolt/stable-diffusion-webui-vid2vid.git`
+- install MiDaS
+  - `cd <SD>\repositories`
+  - `git clone https://github.com/isl-org/MiDaS.git midas`
+- install dependencies
+  - `ffmpeg`
+  - `rife-ncnn-vulkan`
+  - `realesrgan-ncnn-vulkan`
+
 
 After installation & webui restart, you should find this control panel in `img2img` tab, under the `Script` dropdown. Now, follow those instruction guide to start! 🧐
 
