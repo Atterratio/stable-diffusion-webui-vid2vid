@@ -515,11 +515,11 @@ def _btn_ffmpeg_extract(video_file:object, extract_frame:str, extract_fmt:str, e
 
         extract_frame: ExtractFrame = ExtractFrame(extract_frame)
         if extract_frame == ExtractFrame.FPS:
-            cmd = f'"{FFMPEG_BIN}" -i "{video_file.name}" -an -sn -f image2 -q:v 2 -fps_mode vfr -r {extract_fps} "{out_dp}\\%05d.{extract_fmt}"'
+            cmd = f'"{FFMPEG_BIN}" -i "{video_file.name}" -an -sn -f image2 -q:v 2 -fps_mode vfr -r {extract_fps} "{out_dp}{os.sep}%05d.{extract_fmt}"'
         elif extract_frame == ExtractFrame.IPB:
-            cmd = f'"{FFMPEG_BIN}" -i "{video_file.name}" -an -sn -f image2 -q:v 2 -fps_mode vfr "{out_dp}\\%05d.{extract_fmt}"'
+            cmd = f'"{FFMPEG_BIN}" -i "{video_file.name}" -an -sn -f image2 -q:v 2 -fps_mode vfr "{out_dp}{os.sep}%05d.{extract_fmt}"'
         else:   # I/P/B
-            cmd = f'"{FFMPEG_BIN}" -i "{video_file.name}" -an -sn -f image2 -q:v 2 -fps_mode vfr -vf "select=eq(pict_type\,{extract_frame.value})" "{out_dp}\\%05d.{extract_fmt}"'
+            cmd = f'"{FFMPEG_BIN}" -i "{video_file.name}" -an -sn -f image2 -q:v 2 -fps_mode vfr -vf "select=eq(pict_type\,{extract_frame.value})" "{out_dp}{os.sep}%05d.{extract_fmt}"'
         sh(cmd)
 
         has_audio = 'no'
@@ -820,9 +820,9 @@ def _btn_ffmpeg_export(export_fmt:str, frame_src:str, extract_fmt:str, extract_f
 
     try:
         try:
-            sh(f'"{FFMPEG_BIN}"{audio_opts} -framerate {get_real_fps()} -i "{in_dp}\\%05d{get_ext()}" -crf 20 -c:v libx264 -pix_fmt yuv420p "{out_fp}"')
+            sh(f'"{FFMPEG_BIN}"{audio_opts} -framerate {get_real_fps()} -i "{in_dp}{os.sep}%05d{get_ext()}" -crf 20 -c:v libx264 -pix_fmt yuv420p "{out_fp}"')
         except:
-            sh(f'"{FFMPEG_BIN}"{audio_opts} -framerate {get_real_fps()} -i "{in_dp}\\%05d{get_ext()}" "{out_fp}"')
+            sh(f'"{FFMPEG_BIN}"{audio_opts} -framerate {get_real_fps()} -i "{in_dp}{os.sep}%05d{get_ext()}" "{out_fp}"')
 
         return RetCode.INFO, f'filesize: {get_file_size(out_fp):.3f}'
     except KeyboardInterrupt:
