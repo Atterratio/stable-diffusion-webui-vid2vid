@@ -32,48 +32,88 @@ from modules.sd_samplers_common import setup_img2img_steps
 
 from helpers.img_utils import *
 
-if 'external resources':
+
+SD_WEBUI_PATH = Path.cwd()
+
+RESR_BIN = Path('realesrgan-ncnn-vulkan')
+RESR_PATH = Path('realesrgan-ncnn-vulkan')
+RIFE_BIN = Path('rife-ncnn-vulkan')
+RIFE_PATH = Path('rife-ncnn-vulkan')
+FFMPEG_BIN = Path('ffmpeg')
+FFPROBE_BIN = Path('ffprobe')
+
+# prompt-travel
+PTRAVEL_PATH = SD_WEBUI_PATH / 'extensions' / 'stable-diffusion-webui-prompt-travel'
+TOOL_PATH = PTRAVEL_PATH / 'tools'
+sys.path.insert(0, str(PTRAVEL_PATH))
+
+# midas
+MIDAS_REPO_PATH = SD_WEBUI_PATH / 'repositories' / 'midas'
+MIDAS_MODEL_PATH = SD_WEBUI_PATH / 'models' / 'midas'
+
+# should be <sd-webui> root abspath
+OUTPUT_PATH = SD_WEBUI_PATH / 'outputs'
+
+if os.name == "posix":
+    CURL_BIN = 'curl'
+
+    for d in os.getenv('PATH').split(':'):
+        d_path = Path(d)
+
+        if d_path.exists():
+            for f in d_path.iterdir():
+                if f.is_file():
+                    if RESR_BIN.name == f.name:
+                        RESR_BIN = f
+                    if RIFE_BIN.name == f.name:
+                        RIFE_BIN = f
+                    if FFMPEG_BIN.name == f.name:
+                        FFMPEG_BIN = f
+                    if FFPROBE_BIN.name == f.name:
+                        FFPROBE_BIN = f
+
+    for d in os.getenv('XDG_DATA_DIRS').split(':'):
+        d_path = Path(d)
+
+        if d_path.exists():
+            for f in d_path.iterdir():
+                if f.is_dir():
+                    if RESR_PATH.name == f.name:
+                        RESR_PATH = f
+                    if RIFE_PATH.name == f.name:
+                        RIFE_PATH = f
+else:
     # general tool
     CURL_BIN = 'curl.exe'
-    # should be <sd-webui> root abspath
-    SD_WEBUI_PATH = Path.cwd()
-    OUTPUT_PATH = SD_WEBUI_PATH / 'outputs'
-    # prompt-travel
-    PTRAVEL_PATH = SD_WEBUI_PATH / 'extensions' / 'stable-diffusion-webui-prompt-travel'
-    sys.path.insert(0, str(PTRAVEL_PATH))
     # bundled tools
-    TOOL_PATH   = PTRAVEL_PATH / 'tools'
-    RESR_PATH   = TOOL_PATH / 'realesrgan-ncnn-vulkan'
-    RESR_BIN    = RESR_PATH / 'realesrgan-ncnn-vulkan.exe'
-    RIFE_PATH   = TOOL_PATH / 'rife-ncnn-vulkan'
-    RIFE_BIN    = RIFE_PATH / 'rife-ncnn-vulkan.exe'
-    FFPROBE_BIN = TOOL_PATH / 'ffmpeg' / 'bin' / 'ffprobe.exe'
-    FFMPEG_BIN  = TOOL_PATH / 'ffmpeg' / 'bin' / 'ffmpeg.exe'
-    # midas
-    MIDAS_REPO_PATH  = SD_WEBUI_PATH / 'repositories' / 'midas'
-    MIDAS_MODEL_PATH = SD_WEBUI_PATH / 'models' / 'midas'
+    RESR_PATH = TOOL_PATH / 'realesrgan-ncnn-vulkan'
+    RESR_BIN = RESR_PATH / '{}.exe'.format(RESR_BIN.name)
+    RIFE_PATH = TOOL_PATH / 'rife-ncnn-vulkan'
+    RIFE_BIN = RIFE_PATH / '{}.exe'.format(RIFE_BIN.name)
+    FFPROBE_BIN = TOOL_PATH / 'ffmpeg' / 'bin' / '{}.exe'.format(FFPROBE_BIN.name)
+    FFMPEG_BIN = TOOL_PATH / 'ffmpeg' / 'bin' / '{}.exe'.format(FFMPEG_BIN.name)
 
-    try:
-        # prompt-travel
-        assert PTRAVEL_PATH.exists()
-        assert TOOL_PATH   .exists()
-        assert RESR_BIN    .exists()
-        assert RIFE_BIN    .exists()
-        assert FFPROBE_BIN .exists()
-        assert FFMPEG_BIN  .exists()
-        from scripts.prompt_travel import process_images_before, process_images_after
-        # deepdanbooru
-        from modules.deepbooru import model as deepbooru_model
-        # midas
-        assert MIDAS_REPO_PATH.exists()
-        from torchvision.transforms import Compose
-        from repositories.midas.midas.dpt_depth import DPTDepthModel
-        from repositories.midas.midas.midas_net import MidasNet
-        from repositories.midas.midas.midas_net_custom import MidasNet_small
-        from repositories.midas.midas.transforms import Resize, NormalizeImage, PrepareForNet
-    except:
-        print_exc()
-        raise RuntimeError('<< integrity check failed, please check your installation :(')
+try:
+    # prompt-travel
+    assert PTRAVEL_PATH.exists()
+    assert TOOL_PATH   .exists()
+    assert RESR_BIN    .exists()
+    assert RIFE_BIN    .exists()
+    assert FFPROBE_BIN .exists()
+    assert FFMPEG_BIN  .exists()
+    from scripts.prompt_travel import process_images_before, process_images_after
+    # deepdanbooru
+    from modules.deepbooru import model as deepbooru_model
+    # midas
+    assert MIDAS_REPO_PATH.exists()
+    from torchvision.transforms import Compose
+    from repositories.midas.midas.dpt_depth import DPTDepthModel
+    from repositories.midas.midas.midas_net import MidasNet
+    from repositories.midas.midas.midas_net_custom import MidasNet_small
+    from repositories.midas.midas.transforms import Resize, NormalizeImage, PrepareForNet
+except:
+    print_exc()
+    raise RuntimeError('<< integrity check failed, please check your installation :(')
 
 def get_resr_model_names() -> List[str]:
     return sorted({fn.stem for fn in (RESR_PATH / 'models').iterdir()})
