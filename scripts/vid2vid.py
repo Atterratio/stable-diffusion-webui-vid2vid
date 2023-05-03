@@ -30,7 +30,7 @@ from modules.processing import Processed, StableDiffusionProcessingImg2Img, get_
 from modules.images import resize_image
 from modules.sd_samplers_common import setup_img2img_steps
 
-from helpers.img_utils import *
+from vid2vid_helpers.img_utils import *
 
 
 SD_WEBUI_PATH = Path.cwd()

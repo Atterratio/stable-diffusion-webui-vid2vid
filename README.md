@@ -81,7 +81,7 @@ Export fmt: webm
 Sigma schedule controls the magnitude to denoise a latent image at each sampling step, and it should be an annealing process so that the final painting converges to some local optimal.
 This extension allows you to override the default sigma scheduling, now you can fine-tune the annealing process on your own.  
 
-For sigmas tuning reference, see different schedule methods using the helper script [helpers/sigma_schedule.py](helpers/sigma_schedule.py):
+For sigmas tuning reference, see different schedule methods using the helper script [helpers/sigma_schedule.py](vid2vid_helpers/sigma_schedule.py):
 
 ![sigma_schedule](img/sigma_schedule.png)
 
