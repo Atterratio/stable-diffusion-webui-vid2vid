@@ -1130,11 +1130,11 @@ class Script(Script):
         if 'process_images_before' in env and 'process_images_after' in env:
             try:
                 on_cfg_denoiser(cfg_denoiser_hijack)
-                process_images_before(p)
+                stored_opts = process_images_before(p)
                 self.processer = process_images_inner
                 images, info = runner(p)
+                process_images_after(p, stored_opts)
             finally:
-                process_images_after(p)
                 remove_callbacks_for_function(cfg_denoiser_hijack)
         else:       # safely fallback when prompt-travel is broken
             try:
