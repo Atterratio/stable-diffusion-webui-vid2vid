@@ -688,7 +688,7 @@ def _btn_deepdanbooru(topk=32) -> TaskResponse:
     try:
         tags: Dict[str, str] = { }
         deepbooru_model.start()
-        for fp in tqdm(list(in_dp.iterdir())):
+        for fp in tqdm(sorted(in_dp.iterdir())):
             img = get_img(fp, mode='RGB')
             tags[fp.name] = deepbooru_model.tag_multi(img)
 
@@ -1162,7 +1162,7 @@ class Script(Script):
         motion_lowcut  = self.motion_lowcut
         motion_highext = self.motion_highext
         depth_lowcut   = self.depth_lowcut
-        init_fns       = os.listdir(init_dp)
+        init_fns       = sorted(os.listdir(init_dp))
 
         motion_dp = workspace / WS_MOTION
         motion_dp.mkdir(exist_ok=True)
