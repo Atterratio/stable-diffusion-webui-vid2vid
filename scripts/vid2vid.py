@@ -515,7 +515,7 @@ def _btn_ffmpeg_extract(video_file:object, extract_frame:str, extract_fmt:str, e
 
         extract_frame: ExtractFrame = ExtractFrame(extract_frame)
         if extract_frame == ExtractFrame.FPS:
-            cmd = f'"{FFMPEG_BIN}" -i "{video_file.name}" -an -sn -f image2 -q:v 2 -fps_mode vfr -r {extract_fps} "{out_dp}{os.sep}%05d.{extract_fmt}"'
+            cmd = f'"{FFMPEG_BIN}" -i "{video_file.name}" -an -sn -f image2 -q:v 2 -r {extract_fps} "{out_dp}{os.sep}%05d.{extract_fmt}"'
         elif extract_frame == ExtractFrame.IPB:
             cmd = f'"{FFMPEG_BIN}" -i "{video_file.name}" -an -sn -f image2 -q:v 2 -fps_mode vfr "{out_dp}{os.sep}%05d.{extract_fmt}"'
         else:   # I/P/B
