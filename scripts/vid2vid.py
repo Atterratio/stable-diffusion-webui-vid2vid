@@ -21,7 +21,7 @@ import torch.nn.functional as F
 import numpy as np
 import cv2
 
-from modules.scripts import Script
+from modules import scripts
 from modules.script_callbacks import remove_callbacks_for_function, on_before_image_saved, ImageSaveParams, on_cfg_denoiser, CFGDenoiserParams
 from modules.ui import gr_show
 from modules.devices import torch_gc, autocast, device, cpu
@@ -30,7 +30,7 @@ from modules.processing import Processed, StableDiffusionProcessingImg2Img, get_
 from modules.images import resize_image
 from modules.sd_samplers_common import setup_img2img_steps
 
-from vid2vid_helpers.img_utils import *
+from vid2vid.img_utils import *
 
 
 SD_WEBUI_PATH = Path.cwd()
@@ -855,7 +855,7 @@ def StableDiffusionProcessingImg2Img_sample(self:StableDiffusionProcessingImg2Im
 # ↑↑↑ the above is modified from 'modules/processing.py' ↑↑↑
 
 
-class Script(Script):
+class Script(scripts.Script):
 
     def title(self):
         return 'vid2vid'
