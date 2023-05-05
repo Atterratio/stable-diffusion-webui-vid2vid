@@ -519,7 +519,7 @@ def _btn_ffmpeg_extract(video_file:object, extract_frame:str, extract_fmt:str, e
         elif extract_frame == ExtractFrame.IPB:
             cmd = f'"{FFMPEG_BIN}" -i "{video_file.name}" -an -sn -f image2 -q:v 2 -fps_mode vfr "{out_dp}{os.sep}%05d.{extract_fmt}"'
         else:   # I/P/B
-            cmd = f'"{FFMPEG_BIN}" -i "{video_file.name}" -an -sn -f image2 -q:v 2 -fps_mode vfr -vf "select=eq(pict_type\,{extract_frame.value})" "{out_dp}{os.sep}%05d.{extract_fmt}"'
+            cmd = f'"{FFMPEG_BIN}" -i "{video_file.name}" -an -sn -f image2 -q:v 2 -fps_mode vfr -vf "select=eq(pict_type\,{extract_frame.name})" "{out_dp}{os.sep}%05d.{extract_fmt}"'
         sh(cmd)
 
         has_audio = 'no'
