@@ -3,6 +3,10 @@ from traceback import format_exc
 from modules.shared import state
 import shutil
 
+import hashlib
+
+from typing import Optional
+
 from scripts.prompt_travel import process_images_before, process_images_after  # type: ignore
 
 from modules import scripts
@@ -18,67 +22,6 @@ from vid2vid_utils.img_utils import *
 from vid2vid_utils.tasks import _btn_ffmpeg_extract, _btn_frame_delta,_btn_deepdanbooru, _btn_midas, _btn_resr, _btn_rife, _btn_ffmpeg_export
 from vid2vid_utils.utils import *
 from vid2vid_utils.constants import *
-
-
-def _file_select(video_file: object) -> List[GradioRequest]:
-    global cur_cache_folder, workspace, ffprob_info
-
-    # close workspace
-    if video_file is None:
-        ws_name = workspace.name
-        workspace = None
-        ffprob_info = None
-
-        return [
-            gr.Text.update(label=LABEL_CACHE_FOLDER, value=cur_cache_folder, interactive=True),
-            gr.TextArea.update(visible=False),
-            gr_update_status(f'closed workspace {ws_name!r}'),
-        ]
-
-    # open existing workspace
-    ws_dp = cur_cache_folder / get_workspace_name(video_file.orig_name)
-    info_fp = Path(ws_dp) / WS_FFPROBE
-    if ws_dp.exists():
-        workspace = ws_dp
-        ws_name = workspace.name
-
-        with open(info_fp, 'r', encoding='utf-8') as fh:
-            ffprob_info = json.load(fh)
-            ffprob_info_str = json.dumps(ffprob_info, indent=2, ensure_ascii=False)
-
-        return [
-            gr.Text.update(label=LABEL_WORKSPACE_FOLDER, value=workspace, interactive=False),
-            gr.TextArea.update(value=ffprob_info_str, visible=True),
-            gr_update_status(f'open workspace {ws_name!r}'),
-        ]
-
-    # try create new workspace
-    cmd = f'"{FFPROBE_BIN}" -i "{video_file.name}" -show_streams -of json'
-    print(f'>> exec: {cmd}')
-    try:
-        ffprob_info = json.loads(os.popen(cmd).read().strip())
-        ffprob_info_str = json.dumps(ffprob_info, indent=2, ensure_ascii=False)
-
-        ws_dp.mkdir(parents=True)
-        workspace = ws_dp
-        ws_name = workspace.name
-
-        with open(info_fp, 'w', encoding='utf-8') as fh:
-            fh.write(ffprob_info_str)
-
-        return [
-            gr.Text.update(label=LABEL_WORKSPACE_FOLDER, value=workspace, interactive=False),
-            gr.TextArea.update(value=ffprob_info_str, visible=True),
-            gr_update_status(f'create new workspace {ws_name!r}'),
-        ]
-    except:
-        e = format_exc()
-        print(e)
-        return [
-            gr.Text.update(),
-            gr.TextArea.update(visible=False),
-            gr_update_status(e, code=RetCode.ERROR),
-        ]
 
 
 def _txt_working_folder(working_folder: str) -> GradioRequest:
@@ -127,6 +70,26 @@ def _chk_process_audio(process_audio: bool) -> None:
 
 
 class Script(scripts.Script):
+    def __init__(self):
+        self.workspace: Workspace = Workspace()
+        # self.ffprob_info: dict = {}
+        # self.cur_cache_folder: Path = Path(DEFAULT_CACHE_FOLDER)
+        # self.cur_allow_overwrite: bool = DEFAULT_ALLOW_OVERWRITE
+        # self.cur_process_audio: bool = DEFAULT_PROCESS_AUDIO
+        # self.cur_task: str = ""
+        # self.cur_proc: Optional[Popen] = None
+        #
+        #
+        # self.init_dp: Path = workspace / WS_FRAMES
+        # self.delta_dp: Path = workspace / WS_DFRAME
+        # self.depth_dp: Path = workspace / WS_DEPTH
+        # self.fdc_methd: Optional[FrameDeltaCorrection] = None
+        # self.delta_mask = delta_mask
+        # self.spatial_mask = spatial_mask
+        # self.motion_highext = motion_highext
+        # self.motion_lowcut = motion_lowcut
+        # self.depth_lowcut = depth_lowcut
+
     def title(self):
         return 'vid2vid'
 
@@ -155,7 +118,7 @@ class Script(scripts.Script):
                 with gr.Row(variant='compact').style(equal_height=True):
                     video_file = gr.File(label=LABEL_VIDEO_FILE, file_types=['video'])
                     video_info = gr.TextArea(label=LABEL_VIDEO_INFO, max_lines=7, visible=False)
-                    video_file.change(fn=_file_select, inputs=video_file,
+                    video_file.change(fn=self._file_change, inputs=video_file,
                                       outputs=[working_folder, video_info, status_info], show_progress=False)
 
                 with gr.Row(variant='compact').style(equal_height=True):
@@ -287,22 +250,22 @@ class Script(scripts.Script):
 
                 gr.HTML(html.escape(r'=> expected to get resr\*.png, rife\*.png'))
 
-            with gr.Tab('5: Export'):
-                with gr.Row(variant='panel'):
-                    gr.HTML(value=EXPORT_HELP_HTML)
-
-                with gr.Row(variant='compact').style(equal_height=True):
-                    export_fmt = gr.Dropdown(label=LABEL_EXPORT_FMT, value=lambda: DEFAULT_EXPORT_FMT,
-                                             choices=CHOICES_VIDEO_FMT)
-                    frame_src = gr.Dropdown(label=LABEL_FRAME_SRC, value=lambda: DEFAULT_FRAME_SRC,
-                                            choices=CHOICES_FRAME_SRC)
-
-                    btn_ffmpeg_compose = gr.Button('Export!')
-                    btn_ffmpeg_compose.click(fn=_btn_ffmpeg_export,
-                                             inputs=[export_fmt, frame_src, extract_fmt, extract_fps, extract_frame,
-                                                     rife_ratio], outputs=status_info, show_progress=False)
-
-                gr.HTML(html.escape(r'=> expected to get synth-*.mp4'))
+            # with gr.Tab('5: Export'):
+            #     with gr.Row(variant='panel'):
+            #         gr.HTML(value=EXPORT_HELP_HTML)
+            #
+            #     with gr.Row(variant='compact').style(equal_height=True):
+            #         export_fmt = gr.Dropdown(label=LABEL_EXPORT_FMT, value=lambda: DEFAULT_EXPORT_FMT,
+            #                                  choices=CHOICES_VIDEO_FMT)
+            #         frame_src = gr.Dropdown(label=LABEL_FRAME_SRC, value=lambda: DEFAULT_FRAME_SRC,
+            #                                 choices=CHOICES_FRAME_SRC)
+            #
+            #         btn_ffmpeg_compose = gr.Button('Export!')
+            #         btn_ffmpeg_compose.click(fn=_btn_ffmpeg_export,
+            #                                  inputs=[export_fmt, frame_src, extract_fmt, extract_fps, extract_frame,
+            #                                          rife_ratio], outputs=status_info, show_progress=False)
+            #
+            #     gr.HTML(html.escape(r'=> expected to get synth-*.mp4'))
 
         with gr.Row(variant='compact').style(equal_height=True):
             allow_overwrite = gr.Checkbox(label=LABEL_ALLOW_OVERWRITE, value=lambda: DEFAULT_ALLOW_OVERWRITE)
@@ -321,6 +284,41 @@ class Script(scripts.Script):
             fdc_methd, delta_mask, spatial_mask,
             motion_highext, motion_lowcut, depth_lowcut,
         ]
+
+    def _file_change(self, video_file: object):
+        # close workspace
+        if video_file is None:
+            workspace_name = self.workspace.name
+            self.workspace.close()
+
+            return [
+                gr.Text.update(label=LABEL_CACHE_FOLDER, value=self.workspace.cache_folder, interactive=True),
+                gr.TextArea.update(visible=False),
+                gr_update_status(f'closed workspace {workspace_name!r}'),
+            ]
+        else:
+            # open workspace
+            try:
+                status = self.workspace.open(video_file)
+            except:
+                e = format_exc()
+                print(e)
+                return [
+                    gr.Text.update(),
+                    gr.TextArea.update(visible=False),
+                    gr_update_status(e, code=RetCode.ERROR),
+                ]
+
+            if status == WorkspaceStatus.NEW:
+                message = f'create new workspace {self.workspace}'
+            else:
+                message = f'open workspace {self.workspace}'
+
+            return [
+                gr.Text.update(label=LABEL_WORKSPACE_FOLDER, value=self.workspace.workspace, interactive=False),
+                gr.TextArea.update(value=self.workspace.ffprob_str, visible=True),
+                gr_update_status(message),
+            ]
 
     def run(self, p: StableDiffusionProcessingImg2Img,
             img2img_mode: str,
@@ -344,7 +342,7 @@ class Script(scripts.Script):
                 return Processed(p, [], p.seed, 'no current workspace opened!')
 
             if 'check cache exists':
-                out_dp = workspace / WS_IMG2IMG
+                out_dp = workspace / Workspace.WS_IMG2IMG
                 if out_dp.exists():
                     if not cur_allow_overwrite:
                         return Processed(p, [], p.seed, task_ignore_str('img2img'))
@@ -352,14 +350,14 @@ class Script(scripts.Script):
                 out_dp.mkdir()
 
             if 'check required materials exist':
-                frames_dp = workspace / WS_FRAMES
+                frames_dp = workspace / Workspace.WS_FRAMES
                 if not frames_dp.exists():
                     return Processed(p, [], p.seed, f'frames folder not found: {frames_dp}')
                 n_inits = get_folder_file_count(frames_dp)
 
                 require_delta = any([spatial_mask == MaskType.MOTION, delta_mask == MaskType.MOTION,
                                      fdc_methd != FrameDeltaCorrection.NONE])
-                delta_dp = workspace / WS_DFRAME
+                delta_dp = workspace / Workspace.WS_DFRAME
                 if require_delta:
                     if not delta_dp.exists():
                         return Processed(p, [], p.seed, f'framedelta folder not found: {delta_dp}')
@@ -369,7 +367,7 @@ class Script(scripts.Script):
                                          f'number mismatch for n_delta ({n_delta}) != n_frames ({n_inits}) - 1')
 
                 require_depth = spatial_mask == MaskType.DEPTH
-                depth_dp = workspace / WS_DEPTH
+                depth_dp = workspace / Workspace.WS_DEPTH
                 if require_depth:
                     if not depth_dp.exists():
                         return Processed(p, [], p.seed, f'mask folder not found: {depth_dp}')
@@ -389,7 +387,7 @@ class Script(scripts.Script):
             self.depth_lowcut = depth_lowcut
         else:
             if workspace is not None:
-                out_dp = workspace / WS_IMG2IMG_DEBUG
+                out_dp = workspace / Workspace.WS_IMG2IMG_DEBUG
                 out_dp.mkdir(exist_ok=True)
             else:
                 out_dp = p.outpath_samples
@@ -474,7 +472,7 @@ class Script(scripts.Script):
         depth_lowcut = self.depth_lowcut
         init_fns = sorted(os.listdir(init_dp))
 
-        motion_dp = workspace / WS_MOTION
+        motion_dp = workspace / Workspace.WS_MOTION
         motion_dp.mkdir(exist_ok=True)
 
         initial_info: str = None
@@ -489,7 +487,7 @@ class Script(scripts.Script):
             return im_to_img(im_mask_lowcut(img_to_im(img), thresh=lowcut / 255.0))  # [0.0, 1.0]
 
         def get_delta(idx: int, w: int = None, h: int = None) -> npimg:
-            img = get_img(delta_dp / Path(init_fns[idx]).with_suffix('.png'))
+            img = get_img(self.delta_dp / Path(init_fns[idx]).with_suffix('.png'))
             if all([h, w]): img = resize_image(p.resize_mode, img, w, h)
             return im_shift_n1p1(img_to_im(img))  # [-1.0, 1.0]
 
@@ -591,3 +589,85 @@ class Script(scripts.Script):
             remove_callbacks_for_function(image_save_hijack)
 
         return images, initial_info
+
+
+class Workspace:
+    WS_FFPROBE = 'ffprobe.json'
+    WS_FRAMES = 'frames'
+    WS_AUDIO = 'audio.wav'
+    WS_DFRAME = 'framedelta'
+    WS_MOTION = 'motionmask'
+    WS_DEPTH = 'depthmask'  # only for debug, not for prepare
+    WS_TAGS = 'tags.json'
+    WS_TAGS_TOPK = 'tags-topk.txt'
+    WS_IMG2IMG = 'img2img'
+    WS_IMG2IMG_DEBUG = 'img2img.debug'
+    WS_RESR = 'resr'
+    WS_RIFE = 'rife'
+    WS_SYNTH = 'synth'  # stem
+
+    def __init__(self):
+        self.activate = False
+        self.name: Optional[str] = None
+        self.hash: Optional[str] = None
+        self.ffprob_info: Optional[dict] = None
+        self.ffprob_str: Optional[str] = None
+
+        self.cache_folder: Path = Path(DEFAULT_CACHE_FOLDER)
+        self.allow_overwrite: bool = DEFAULT_ALLOW_OVERWRITE
+        self.process_audio: bool = DEFAULT_PROCESS_AUDIO
+        self.task: Optional[str] = None
+        self.proc: Optional[Popen] = None
+
+        self.workspace: Optional[Path] = None
+
+        self.ffprob_cache: Optional[Path] = None
+        self.frames_cache: Optional[Path] = None
+        self.delta_cache: Optional[Path] = None
+        self.depth_cache: Optional[Path] = None
+
+    def __str__(self):
+        return f"{self.name} - {self.hash}" if self.activate else ""
+
+    def create(self, video_file):
+        cmd = f'"{FFPROBE_BIN}" -i "{video_file.name}" -show_streams -of json'
+        print(f'>> exec: {cmd}')
+
+        self.ffprob_info = json.loads(os.popen(cmd).read().strip())
+        self.ffprob_str = json.dumps(self.ffprob_info, indent=2, ensure_ascii=False)
+
+        self.workspace.mkdir(parents=True)
+        with self.ffprob_cache.open('w') as ffp:
+            json.dump(self.ffprob_info, ffp)
+
+        self.activate = True
+
+        return WorkspaceStatus.NEW
+
+    def open(self, video_file) -> WorkspaceStatus:
+        video_path = Path(video_file.orig_name)
+
+        self.name = video_path.name
+        with video_path.open('rb') as vf:
+            self.hash = hashlib.md5(vf.read()).hexdigest()[:16]
+
+        self.workspace = self.cache_folder / self.hash
+
+        self.ffprob_cache = self.workspace / self.WS_FFPROBE
+        self.frames_cache = self.workspace / self.WS_FRAMES
+        self.delta_cache = self.workspace / self.WS_DFRAME
+        self.depth_cache = self.workspace / self.WS_DEPTH
+
+        if self.ffprob_cache.exists():
+            with self.ffprob_cache.open('r') as ffp:
+                self.ffprob_info = json.load(ffp)
+                self.ffprob_str = json.dumps(self.ffprob_info, indent=2, ensure_ascii=False)
+
+            self.activate = True
+
+            return WorkspaceStatus.EXIST
+        else:
+            return self.create(video_file)
+
+    def close(self):
+        self.__init__()

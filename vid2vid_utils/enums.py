@@ -65,4 +65,9 @@ class RetCode(Enum):
     ERROR = 'error'
 
 
+class WorkspaceStatus(Enum):
+    NEW = 'new'
+    EXIST = 'existed'
+
+
 GradioRequest = Dict[str, Any]

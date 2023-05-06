@@ -15,21 +15,6 @@ def __(key, value=None):
     return opts.data.get(k2, value)
 
 
-# cache folder layout
-WS_FFPROBE = 'ffprobe.json'
-WS_FRAMES = 'frames'
-WS_AUDIO = 'audio.wav'
-WS_DFRAME = 'framedelta'
-WS_MOTION = 'motionmask'  # only for debug, not for prepare
-WS_DEPTH = 'depthmask'
-WS_TAGS = 'tags.json'
-WS_TAGS_TOPK = 'tags-topk.txt'
-WS_IMG2IMG = 'img2img'
-WS_IMG2IMG_DEBUG = 'img2img.debug'
-WS_RESR = 'resr'
-WS_RIFE = 'rife'
-WS_SYNTH = 'synth'  # stem
-
 LABEL_CACHE_FOLDER = 'Cache Folder'
 LABEL_WORKSPACE_FOLDER = 'Workspace Folder'
 LABEL_VIDEO_FILE = 'Input video file'
@@ -69,15 +54,15 @@ CHOICES_IMG2IMG_MODE = [x.value for x in Img2ImgMode]
 CHOICES_MASK = [x.value for x in MaskType]
 CHOICES_RESR_MODEL = get_resr_model_names()
 CHOICES_RIFE_MODEL = get_rife_model_names()
-CHOICES_FRAME_SRC = [
-    WS_FRAMES,
-    WS_DFRAME,
-    WS_MOTION,
-    WS_DEPTH,
-    WS_IMG2IMG,
-    WS_RESR,
-    WS_RIFE,
-]
+# CHOICES_FRAME_SRC = [
+#     WS_FRAMES,
+#     WS_DFRAME,
+#     WS_MOTION,
+#     WS_DEPTH,
+#     WS_IMG2IMG,
+#     WS_RESR,
+#     WS_RIFE,
+# ]
 
 INIT_CACHE_FOLDER = OUTPUT_PATH / 'sd-webui-vid2vid'
 INIT_CACHE_FOLDER.mkdir(exist_ok=True)
@@ -103,7 +88,7 @@ DEFAULT_DEPTH_LOWCUT = __(LABEL_DEPTH_LOWCUT, -1)
 DEFAULT_RESR_MODEL = __(LABEL_RESR_MODEL, 'realesr-animevideov3-x2')
 DEFAULT_RIFE_MODEL = __(LABEL_RIFE_MODEL, 'rife-v4')
 DEFAULT_RIFE_RATIO = __(LABEL_RIFE_RATIO, 2.0)
-DEFAULT_FRAME_SRC = __(LABEL_FRAME_SRC, WS_RIFE)
+# DEFAULT_FRAME_SRC = __(LABEL_FRAME_SRC, WS_RIFE)
 DEFAULT_EXPORT_FMT = __(LABEL_EXPORT_FMT, VideoFormat.MP4.value)
 DEFAULT_ALLOW_OVERWRITE = __(LABEL_ALLOW_OVERWRITE, True)
 DEFAULT_PROCESS_AUDIO = __(LABEL_PROCESS_AUDIO, False)
@@ -157,10 +142,3 @@ EXPORT_HELP_HTML = '''
 
 
 # TODO: fix global variables
-cur_cache_folder: Path = Path(DEFAULT_CACHE_FOLDER)
-workspace: Path = None
-ffprob_info: dict = None
-cur_allow_overwrite: bool = DEFAULT_ALLOW_OVERWRITE
-cur_process_audio: bool = DEFAULT_PROCESS_AUDIO
-cur_task: str = None
-cur_proc: Popen = None

@@ -10,6 +10,7 @@ from vid2vid_utils.enums import *
 def get_folder_file_count(dp:Union[Path, str]) -> int:
     return len(os.listdir(dp))
 
+test = Path()
 
 def get_file_size(fp:Union[Path, str]) -> float:
     return os.path.getsize(fp) / 2**20
