@@ -9,10 +9,25 @@ OUTPUT_PATH = SD_WEBUI_PATH / 'outputs'
 
 
 def __(key, value=None):
-    k1 = f'customscript/vid2vid_utils.py/img2img/{key}/value'
+    k1 = f'customscript/vid2vid.py/img2img/{key}/value'
     if k1 in opts.data: return opts.data.get(k1, value)
     k2 = f'img2img/{key}/value'
     return opts.data.get(k2, value)
+
+
+WS_FFPROBE = 'ffprobe.json'
+WS_FRAMES = 'frames'
+WS_AUDIO = 'audio.wav'
+WS_DFRAME = 'framedelta'
+WS_MOTION = 'motionmask'
+WS_DEPTH = 'depthmask'  # only for debug, not for prepare
+WS_TAGS = 'tags.json'
+WS_TAGS_TOPK = 'tags-topk.txt'
+WS_IMG2IMG = 'img2img'
+WS_IMG2IMG_DEBUG = 'img2img.debug'
+WS_RESR = 'resr'
+WS_RIFE = 'rife'
+WS_SYNTH = 'synth'  # stem
 
 
 LABEL_CACHE_FOLDER = 'Cache Folder'
@@ -54,15 +69,15 @@ CHOICES_IMG2IMG_MODE = [x.value for x in Img2ImgMode]
 CHOICES_MASK = [x.value for x in MaskType]
 CHOICES_RESR_MODEL = get_resr_model_names()
 CHOICES_RIFE_MODEL = get_rife_model_names()
-# CHOICES_FRAME_SRC = [
-#     WS_FRAMES,
-#     WS_DFRAME,
-#     WS_MOTION,
-#     WS_DEPTH,
-#     WS_IMG2IMG,
-#     WS_RESR,
-#     WS_RIFE,
-# ]
+CHOICES_FRAME_SRC = [
+    WS_FRAMES,
+    WS_DFRAME,
+    WS_MOTION,
+    WS_DEPTH,
+    WS_IMG2IMG,
+    WS_RESR,
+    WS_RIFE,
+]
 
 INIT_CACHE_FOLDER = OUTPUT_PATH / 'sd-webui-vid2vid'
 INIT_CACHE_FOLDER.mkdir(exist_ok=True)
@@ -88,7 +103,7 @@ DEFAULT_DEPTH_LOWCUT = __(LABEL_DEPTH_LOWCUT, -1)
 DEFAULT_RESR_MODEL = __(LABEL_RESR_MODEL, 'realesr-animevideov3-x2')
 DEFAULT_RIFE_MODEL = __(LABEL_RIFE_MODEL, 'rife-v4')
 DEFAULT_RIFE_RATIO = __(LABEL_RIFE_RATIO, 2.0)
-# DEFAULT_FRAME_SRC = __(LABEL_FRAME_SRC, WS_RIFE)
+DEFAULT_FRAME_SRC = __(LABEL_FRAME_SRC, WS_RIFE)
 DEFAULT_EXPORT_FMT = __(LABEL_EXPORT_FMT, VideoFormat.MP4.value)
 DEFAULT_ALLOW_OVERWRITE = __(LABEL_ALLOW_OVERWRITE, True)
 DEFAULT_PROCESS_AUDIO = __(LABEL_PROCESS_AUDIO, False)
