@@ -377,26 +377,26 @@ class Script(scripts.Script):
         delta_mask: MaskType = MaskType(delta_mask)
 
         if img2img_mode == Img2ImgMode.BATCH:
-            if workspace is None:
+            if self.workspace.workspace is None:
                 return Processed(p, [], p.seed, 'no current workspace opened!')
 
             if 'check cache exists':
-                out_dp = workspace / Workspace.WS_IMG2IMG
+                out_dp = self.workspace.workspace / WS_IMG2IMG
                 if out_dp.exists():
-                    if not cur_allow_overwrite:
+                    if not self.workspace.allow_overwrite:
                         return Processed(p, [], p.seed, task_ignore_str('img2img'))
                     shutil.rmtree(str(out_dp))
                 out_dp.mkdir()
 
             if 'check required materials exist':
-                frames_dp = workspace / Workspace.WS_FRAMES
+                frames_dp = self.workspace.workspace / WS_FRAMES
                 if not frames_dp.exists():
                     return Processed(p, [], p.seed, f'frames folder not found: {frames_dp}')
                 n_inits = get_folder_file_count(frames_dp)
 
                 require_delta = any([spatial_mask == MaskType.MOTION, delta_mask == MaskType.MOTION,
                                      fdc_methd != FrameDeltaCorrection.NONE])
-                delta_dp = workspace / Workspace.WS_DFRAME
+                delta_dp = self.workspace.workspace / WS_DFRAME
                 if require_delta:
                     if not delta_dp.exists():
                         return Processed(p, [], p.seed, f'framedelta folder not found: {delta_dp}')
@@ -406,7 +406,7 @@ class Script(scripts.Script):
                                          f'number mismatch for n_delta ({n_delta}) != n_frames ({n_inits}) - 1')
 
                 require_depth = spatial_mask == MaskType.DEPTH
-                depth_dp = workspace / Workspace.WS_DEPTH
+                depth_dp = self.workspace.workspace / WS_DEPTH
                 if require_depth:
                     if not depth_dp.exists():
                         return Processed(p, [], p.seed, f'mask folder not found: {depth_dp}')
@@ -425,8 +425,8 @@ class Script(scripts.Script):
             self.motion_lowcut = motion_lowcut
             self.depth_lowcut = depth_lowcut
         else:
-            if workspace is not None:
-                out_dp = workspace / Workspace.WS_IMG2IMG_DEBUG
+            if self.workspace is not None:
+                out_dp = self.workspace.workspace / WS_IMG2IMG_DEBUG
                 out_dp.mkdir(exist_ok=True)
             else:
                 out_dp = p.outpath_samples
@@ -511,7 +511,7 @@ class Script(scripts.Script):
         depth_lowcut = self.depth_lowcut
         init_fns = sorted(os.listdir(init_dp))
 
-        motion_dp = workspace / Workspace.WS_MOTION
+        motion_dp = self.workspace.workspace / WS_MOTION
         motion_dp.mkdir(exist_ok=True)
 
         initial_info: str = None
@@ -954,10 +954,10 @@ class Workspace:
 
     @task
     def _btn_resr(self, resr_model: str) -> TaskResponse:
-        if not self.images_cache:
+        if not self.images_cache.exists():
             return RetCode.ERROR, f'img2img folder not found: {self.images_cache}'
 
-        if self.resr_cache:
+        if self.resr_cache.exists():
             if not self.allow_overwrite:
                 return RetCode.WARN, task_ignore_str('resr')
 
