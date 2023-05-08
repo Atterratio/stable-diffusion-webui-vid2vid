@@ -13,6 +13,9 @@ from typing import Callable
 
 import hashlib
 
+from subprocess import Popen
+import signal
+
 from typing import Optional
 
 from scripts.prompt_travel import process_images_before, process_images_after  # type: ignore
@@ -63,34 +66,12 @@ from vid2vid_utils.utils import *
 TaskResponse = Tuple[RetCode, str]
 
 
-def task(fn: Callable):
-    def wrapper(ws, *args, **kwargs):
-        task_name = fn.__name__
-        if ws is None:
-            code = RetCode.ERROR
-            info = 'no current workspace opened!'
-            ts = None
-        elif ws.task_name is not None:
-            code = RetCode.ERROR
-            info = f'task {ws.task_name} is stilling running!'
-            ts = None
-        else:
-            ws.task_name = task_name
-            print(f'>> run task {ws.task_name}')
-            state.interrupted = False
-            _ts = time()
-            code, info = fn(ws, *args, **kwargs)
-            ts = time() - _ts
-            ws.task_name = None
-
-        return gr_update_status(info, code=code, task=task_name, ts=ts)
-
-    return wrapper
-
-
 class Script(scripts.Script):
     def __init__(self):
-        self.ws: Optional[Workspace] = None
+        self.workspace: Optional[Workspace] = None
+
+        self.task_name: Optional[str] = None
+        self.task_subprocess: Optional[Popen] = None
 
         self.allow_overwrite: bool = DEFAULT_ALLOW_OVERWRITE
         self.process_audio: bool = DEFAULT_PROCESS_AUDIO
@@ -141,7 +122,7 @@ class Script(scripts.Script):
                                          inputs=extract_frame, outputs=extract_fps, show_progress=False)
 
                     btn_ffmpeg_extract = gr.Button('Extract frames!')
-                    btn_ffmpeg_extract.click(fn=self._click_ffmpeg_extract,
+                    btn_ffmpeg_extract.click(fn=self._frames_extract,
                                              inputs=[video_file, extract_frame, extract_fmt, extract_fps],
                                              outputs=status_info, show_progress=False)
 
@@ -157,13 +138,13 @@ class Script(scripts.Script):
 
                 with gr.Row(variant='default').style(equal_height=True):
                     btn_frame_delta = gr.Button('Make frame delta!')
-                    btn_frame_delta.click(fn=self._click_btn_frame_delta, outputs=status_info, show_progress=False)
+                    btn_frame_delta.click(fn=self.frame_delta_extract, outputs=status_info, show_progress=False)
 
                     btn_midas = gr.Button('Make depth masks!')
-                    btn_midas.click(fn=self._click_btn_midas, inputs=midas_model, outputs=status_info, show_progress=False)
+                    btn_midas.click(fn=self.frame_depth_extract, inputs=midas_model, outputs=status_info, show_progress=False)
 
                     btn_deepdanbooru = gr.Button('Make inverted tags!')
-                    btn_deepdanbooru.click(fn=self._click_btn_deepdanbooru, outputs=status_info, show_progress=False)
+                    btn_deepdanbooru.click(fn=self.tags_extract, outputs=status_info, show_progress=False)
 
                 gr.HTML(html.escape(r'=> expected to get framedelta\*.png, depthmask\*.png, tags.json, tags-topk.txt'))
 
@@ -244,7 +225,7 @@ class Script(scripts.Script):
                     resr_model = gr.Dropdown(label=LABEL_RESR_MODEL, value=lambda: DEFAULT_RESR_MODEL,
                                              choices=CHOICES_RESR_MODEL)
                     btn_resr = gr.Button('Launch super-resolution!')
-                    btn_resr.click(fn=self._click_btn_resr, inputs=resr_model, outputs=status_info, show_progress=False)
+                    btn_resr.click(fn=self.resr_generation, inputs=resr_model, outputs=status_info, show_progress=False)
 
                 with gr.Row(variant='compact').style(equal_height=True):
                     rife_model = gr.Dropdown(label=LABEL_RIFE_MODEL, value=lambda: DEFAULT_RIFE_MODEL,
@@ -252,7 +233,7 @@ class Script(scripts.Script):
                     rife_ratio = gr.Slider(label=LABEL_RIFE_RATIO, value=lambda: DEFAULT_RIFE_RATIO, minimum=0.5,
                                            maximum=4.0, step=0.1)
                     btn_rife = gr.Button('Launch frame-interpolation!')
-                    btn_rife.click(fn=self._click_btn_rife, inputs=[rife_model, rife_ratio, extract_fmt], outputs=status_info,
+                    btn_rife.click(fn=self.rife_generation, inputs=[rife_model, rife_ratio, extract_fmt], outputs=status_info,
                                    show_progress=False)
 
                 gr.HTML(html.escape(r'=> expected to get resr\*.png, rife\*.png'))
@@ -268,7 +249,7 @@ class Script(scripts.Script):
                                             choices=CHOICES_FRAME_SRC)
 
                     btn_ffmpeg_compose = gr.Button('Export!')
-                    btn_ffmpeg_compose.click(fn=self._click_btn_ffmpeg_export,
+                    btn_ffmpeg_compose.click(fn=self.ffmpeg_export,
                                              inputs=[export_fmt, frame_src, extract_fmt, extract_fps, extract_frame,
                                                      rife_ratio], outputs=status_info, show_progress=False)
 
@@ -292,108 +273,6 @@ class Script(scripts.Script):
             motion_highext, motion_lowcut, depth_lowcut,
         ]
 
-    def _change_working_folder_input(self, working_folder: str) -> GradioRequest:
-        # Mode: workspace folder
-        if self.ws is not None:
-            return gr_update_status()
-
-        # Mode: cache folder
-        working_folder: Path = Path(working_folder)
-        if working_folder.is_dir():
-            self.cache_folder = working_folder
-            return gr_update_status(f'set cache folder path: {self.cache_folder}')
-        else:
-            return gr_update_status(f'invalid folder path: {working_folder}', code=RetCode.WARN)
-
-    def _click_working_folder_button(self, working_folder: str) -> GradioRequest:
-        if Path(working_folder).is_dir():
-            os.startfile(working_folder)  #TODO: fix graphical choose for linux
-
-            return gr_update_status(f'open folder: {working_folder!r}')
-        else:
-            return gr_update_status(f'invalid folder path: {working_folder!r}', code=RetCode.ERROR)
-
-    def _change_video_file(self, video_file):
-        # close workspace
-        if video_file is None:
-            workspace = str(self.ws)
-
-            self.ws = None
-
-            return [
-                gr.Text.update(label=LABEL_WORKING_FOLDER, value=self.cache_folder, interactive=True),
-                gr.TextArea.update(visible=False),
-                gr_update_status(f'closed workspace {workspace}'),
-            ]
-        else:
-            # open workspace
-            try:
-                self.ws = Workspace(video_file, self.cache_folder, self.allow_overwrite, self.process_audio)
-            except Exception as e:
-                print(e)
-                return [
-                    gr.Text.update(),
-                    gr.TextArea.update(visible=False),
-                    gr_update_status(e, code=RetCode.ERROR),
-                ]
-            else:
-                if self.ws.new:
-                    message = f'create new workspace {self.ws}'
-                else:
-                    message = f'open workspace {self.ws}'
-
-                return [
-                    gr.Text.update(label=LABEL_WORKSPACE_FOLDER, value=self.ws.workspace, interactive=False),
-                    gr.TextArea.update(value=self.ws.ffprob_str, visible=True),
-                    gr_update_status(message),
-                ]
-
-    def _click_ffmpeg_extract(self, video_file: object, extract_frame: str, extract_fmt: str, extract_fps: float):
-        return self.ws.frames_extract(video_file, extract_frame, extract_fmt, extract_fps)
-
-    def _click_btn_frame_delta(self):
-        return self.ws.frame_delta_extract()
-
-    def _click_btn_midas(self):
-        return self.ws.frame_depth_extract()
-
-    def _click_btn_deepdanbooru(self, topk=32):
-        return self.ws.frame_depth_extract(topk=topk)
-
-    def _click_btn_resr(self, resr_model: str) -> TaskResponse:
-        return self.ws.resr_generation(resr_model)
-
-    def _click_btn_rife(self, rife_model: str, rife_ratio: float, extract_fmt: str) -> TaskResponse:
-        return self.ws.resr_generation(rife_model, rife_ratio, extract_fmt)
-
-    def _click_btn_ffmpeg_export(self, export_fmt: str, frame_src: str, extract_fmt: str, extract_fps: float, extract_frame: str,
-                           rife_ratio: float) -> TaskResponse:
-        return self.ws.resr_generation(export_fmt, frame_src, extract_fmt, extract_fps, extract_frame, rife_ratio)
-
-
-    def _change_allow_overwrite(self, allow_overwrite: bool) -> None:
-        self.allow_overwrite = allow_overwrite
-
-        if self.ws:
-            self.ws.allow_overwrite = allow_overwrite
-
-    def _change_process_audio(self, process_audio: bool) -> None:
-        self.process_audio = process_audio
-
-        if self.ws:
-            self.ws.process_audio = process_audio
-
-    def _click_interrupt(self) -> GradioRequest:
-        if self.ws.task_subprocess is not None:
-            self.ws.task_subprocess.kill()
-            self.ws.task_subprocess = None
-
-        state.interrupt()
-
-        self.ws.task_subprocess = None
-
-        return gr_update_status('interrupted', code=RetCode.ERROR)
-
     def run(self, p: StableDiffusionProcessingImg2Img,
             img2img_mode: str,
             init_noise_w: float, sigma_meth: str,
@@ -412,26 +291,26 @@ class Script(scripts.Script):
         delta_mask: MaskType = MaskType(delta_mask)
 
         if img2img_mode == Img2ImgMode.BATCH:
-            if self.ws.workspace is None:
+            if self.workspace.workspace is None:
                 return Processed(p, [], p.seed, 'no current workspace opened!')
 
             if 'check cache exists':
-                out_dp = self.ws.workspace / WS_IMG2IMG
+                out_dp = self.workspace.images_cache
                 if out_dp.exists():
-                    if not self.ws.allow_overwrite:
+                    if not self.allow_overwrite:
                         return Processed(p, [], p.seed, task_ignore_str('img2img'))
                     shutil.rmtree(str(out_dp))
                 out_dp.mkdir()
 
             if 'check required materials exist':
-                frames_dp = self.ws.workspace / WS_FRAMES
+                frames_dp = self.workspace.workspace / WS_FRAMES
                 if not frames_dp.exists():
                     return Processed(p, [], p.seed, f'frames folder not found: {frames_dp}')
                 n_inits = get_folder_file_count(frames_dp)
 
                 require_delta = any([spatial_mask == MaskType.MOTION, delta_mask == MaskType.MOTION,
                                      fdc_methd != FrameDeltaCorrection.NONE])
-                delta_dp = self.ws.workspace / WS_DFRAME
+                delta_dp = self.workspace.workspace / WS_DFRAME
                 if require_delta:
                     if not delta_dp.exists():
                         return Processed(p, [], p.seed, f'framedelta folder not found: {delta_dp}')
@@ -441,7 +320,7 @@ class Script(scripts.Script):
                                          f'number mismatch for n_delta ({n_delta}) != n_frames ({n_inits}) - 1')
 
                 require_depth = spatial_mask == MaskType.DEPTH
-                depth_dp = self.ws.workspace / WS_DEPTH
+                depth_dp = self.workspace.workspace / WS_DEPTH
                 if require_depth:
                     if not depth_dp.exists():
                         return Processed(p, [], p.seed, f'mask folder not found: {depth_dp}')
@@ -449,9 +328,19 @@ class Script(scripts.Script):
                     if n_masks != n_inits:
                         return Processed(p, [], p.seed,
                                          f'number mismatch for n_masks ({n_masks}) != n_frames ({n_inits})')
+
+            self.init_dp        = frames_dp
+            self.delta_dp       = delta_dp
+            self.depth_dp       = depth_dp
+            self.fdc_methd      = fdc_methd
+            self.delta_mask     = delta_mask
+            self.spatial_mask   = spatial_mask
+            self.motion_highext = motion_highext
+            self.motion_lowcut  = motion_lowcut
+            self.depth_lowcut   = depth_lowcut
         else:
-            if self.ws is not None:
-                out_dp = self.ws.workspace / WS_IMG2IMG_DEBUG
+            if self.workspace is not None:
+                out_dp = self.workspace.workspace / WS_IMG2IMG_DEBUG
                 out_dp.mkdir(exist_ok=True)
             else:
                 out_dp = p.outpath_samples
@@ -519,6 +408,460 @@ class Script(scripts.Script):
         # show only partial results
         return Processed(p, images[::DEFAULT_EXTRACT_FPS // 4][:100], p.seed, info)
 
+    @staticmethod
+    def _task(fn):
+        def wrapper(self, *args, **kwargs):
+            task_name = fn.__name__.replace("_", " ")
+
+            if self.workspace is None:
+                code = RetCode.ERROR
+                info = 'no current workspace opened!'
+                ts = None
+            elif self.task_name is not None:
+                code = RetCode.ERROR
+                info = f'task "{self.task_name}" is stilling running!'
+                ts = None
+            else:
+                self.task_name = task_name
+                print(f'>> run task {self.task_name}')
+                state.interrupted = False
+                _ts = time()
+                code, info = fn(self, *args, **kwargs)
+                ts = time() - _ts
+                self.task_name = None
+
+            return gr_update_status(info, code=code, task=task_name, ts=ts)
+
+        return wrapper
+
+    def _run_subprocess(self, cmd: str) -> None:
+        print(f'>> exec: {cmd}')
+        self.task_subprocess = Popen(cmd, shell=True, text=True, encoding='utf-8')
+        self.task_subprocess.wait()
+
+    def _task_ignore_str(self) -> str:
+        return f'task "{self.task_name}" ignored due to cached already exists :)'
+
+    def _change_working_folder_input(self, working_folder: str) -> GradioRequest:
+        # Mode: workspace folder
+        if self.workspace is not None:
+            return gr_update_status()
+
+        # Mode: cache folder
+        working_folder: Path = Path(working_folder)
+        if working_folder.is_dir():
+            self.cache_folder = working_folder
+            return gr_update_status(f'set cache folder path: {self.cache_folder}')
+        else:
+            return gr_update_status(f'invalid folder path: {working_folder}', code=RetCode.WARN)
+
+    def _click_working_folder_button(self, working_folder: str) -> GradioRequest:
+        if Path(working_folder).is_dir():
+            os.startfile(working_folder)  #TODO: fix graphical choose for linux
+
+            return gr_update_status(f'open folder: {working_folder!r}')
+        else:
+            return gr_update_status(f'invalid folder path: {working_folder!r}', code=RetCode.ERROR)
+
+    def _change_video_file(self, video_file):
+        # close workspace
+        if video_file is None:
+            workspace = str(self.workspace)
+
+            self.workspace = None
+
+            return [
+                gr.Text.update(label=LABEL_WORKING_FOLDER, value=self.cache_folder, interactive=True),
+                gr.TextArea.update(visible=False),
+                gr_update_status(f'closed workspace {workspace}'),
+            ]
+        else:
+            # open workspace
+            try:
+                self.workspace = Workspace(video_file, self.cache_folder)
+            except Exception as e:
+                print(e)
+                return [
+                    gr.Text.update(),
+                    gr.TextArea.update(visible=False),
+                    gr_update_status(e, code=RetCode.ERROR),
+                ]
+            else:
+                if self.workspace.new:
+                    message = f'create new workspace {self.workspace}'
+                else:
+                    message = f'open workspace {self.workspace}'
+
+                return [
+                    gr.Text.update(label=LABEL_WORKSPACE_FOLDER, value=self.workspace.workspace, interactive=False),
+                    gr.TextArea.update(value=self.workspace.ffprob_str, visible=True),
+                    gr_update_status(message),
+                ]
+
+    def _change_allow_overwrite(self, allow_overwrite: bool) -> None:
+        self.allow_overwrite = allow_overwrite
+
+    def _change_process_audio(self, process_audio: bool) -> None:
+        self.process_audio = process_audio
+
+    @_task
+    def _frames_extract(self, video_file: object, extract_frame: str, extract_fmt: str,
+                        extract_fps: float):
+        if self.workspace.frames_cache.exists():
+            if not self.allow_overwrite:
+                return RetCode.WARN, self._task_ignore_str()
+
+            shutil.rmtree(self.workspace.frames_cache)
+
+        self.workspace.frames_cache.mkdir()
+
+        self.workspace.audio_cache.unlink(missing_ok=True)
+
+        try:
+            # ref:
+            #   - https://ffmpeg.org/ffmpeg.html
+            #   - https://zhuanlan.zhihu.com/p/85895180
+            # ffprobe -i test.mp4 -v quiet -select_streams v -show_entries frame=pkt_pts_time,pict_type
+
+            extract_frame: ExtractFrame = ExtractFrame(extract_frame)
+            if extract_frame == ExtractFrame.FPS:
+                cmd = f'"{FFMPEG_BIN}" -i "{video_file.name}" -an -sn -f image2 -q:v 2 -r {extract_fps} "{self.workspace.frames_cache}{os.sep}%05d.{extract_fmt}"'
+            elif extract_frame == ExtractFrame.IPB:
+                cmd = f'"{FFMPEG_BIN}" -i "{video_file.name}" -an -sn -f image2 -q:v 2 -fps_mode vfr "{self.workspace.frames_cache}{os.sep}%05d.{extract_fmt}"'
+            else:  # I/P/B
+                cmd = f'"{FFMPEG_BIN}" -i "{video_file.name}" -an -sn -f image2 -q:v 2 -fps_mode vfr -vf "select=eq(pict_type\,{extract_frame.name})" "{self.workspace.frames_cache}{os.sep}%05d.{extract_fmt}"'
+            self._run_subprocess(cmd)
+
+            has_audio = 'no'
+            if self.process_audio:
+                for stream in self.workspace.ffprob_info['streams']:
+                    if stream['codec_type'] == 'audio':
+                        self._run_subprocess(f'"{FFMPEG_BIN}" -i "{video_file.name}" -vn -sn "{self.workspace.audio_cache}"')
+                        has_audio = 'yes'
+                        break
+
+            return RetCode.INFO, f'frames: {get_folder_file_count(self.workspace.frames_cache)}, audio: {has_audio}'
+        except KeyboardInterrupt:
+            return RetCode.WARN, 'interrupted by Ctrl+C'
+        except:
+            e = format_exc()
+            print(e)
+            return RetCode.ERROR, e
+
+    @_task
+    def frame_delta_extract(self) -> TaskResponse:
+        if not self.workspace.frames_cache.exists():
+            return RetCode.ERROR, f'frames folder not found: {self.workspace.frames_cache}'
+
+        if self.workspace.delta_cache.exists():
+            if not self.allow_overwrite:
+                return RetCode.WARN, self._task_ignore_str()
+
+            shutil.rmtree(self.workspace.delta_cache)
+
+        self.workspace.delta_cache.mkdir()
+
+        try:
+            fps = list(self.workspace.frames_cache.iterdir())
+            im0, im1 = None, get_im(fps[0], mode='RGB')
+            for fp in tqdm(fps[1:]):
+                if state.interrupted:
+                    break
+
+                im0, im1 = im1, get_im(fp, mode='RGB')
+                delta = im1 - im0  # [-1, 1]
+                im = im_shift_01(delta)  # [0, 1]
+                img = im_to_img(im)
+                img.save(self.workspace.delta_cache / f'{fp.stem}.png')
+
+            return RetCode.INFO, f'framedelta: {get_folder_file_count(self.workspace.delta_cache)}'
+        except KeyboardInterrupt:
+            return RetCode.WARN, 'interrupted by Ctrl+C'
+        except:
+            e = format_exc()
+            print(e)
+            return RetCode.ERROR, e
+        finally:
+            torch_gc()
+            gc.collect()
+
+    @_task
+    def frame_depth_extract(self, midas_model) -> TaskResponse:
+        if not self.workspace.frames_cache.exists():
+            return RetCode.ERROR, f'frames folder not found: {self.workspace.frames_cache}'
+
+        if self.workspace.depth_cache.exists():
+            if not self.allow_overwrite:
+                return RetCode.WARN, self._task_ignore_str()
+
+            shutil.rmtree(self.workspace.depth_cache)
+
+        self.workspace.depth_cache.mkdir()
+
+        try:
+            urls = {
+                MidasModel.DPT_LARGE: 'https://github.com/intel-isl/DPT/releases/download/1_0/dpt_large-midas-2f21e586.pt',
+                MidasModel.DPT_HYBRID: 'https://github.com/intel-isl/DPT/releases/download/1_0/dpt_hybrid-midas-501f0c75.pt',
+                MidasModel.MIDAS_V21: 'https://github.com/AlexeyAB/MiDaS/releases/download/midas_dpt/midas_v21-f6b98070.pt',
+                MidasModel.MIDAS_V21_SMALL: 'https://github.com/AlexeyAB/MiDaS/releases/download/midas_dpt/midas_v21_small-70d6b9c8.pt',
+            }
+            midas_model: MidasModel = MidasModel(midas_model)
+            url = urls[midas_model]
+            model_path = MIDAS_MODEL_PATH / Path(url).name
+            if not model_path.exists():
+                MIDAS_MODEL_PATH.mkdir(parents=True, exist_ok=True)
+                self._run_subprocess(f'{CURL_BIN} {url} -L -C - -o "{model_path}"')
+
+            if midas_model == MidasModel.DPT_LARGE:
+                model = DPTDepthModel(path=model_path, backbone="vitl16_384", non_negative=True)
+                net_w, net_h = 384, 384
+                resize_mode = 'minimal'
+                normalization = NormalizeImage(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+            elif midas_model == MidasModel.DPT_HYBRID:
+                model = DPTDepthModel(path=model_path, backbone="vitb_rn50_384", non_negative=True)
+                net_w, net_h = 384, 384
+                resize_mode = 'minimal'
+                normalization = NormalizeImage(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+            elif midas_model == MidasModel.MIDAS_V21:
+                model = MidasNet(model_path, non_negative=True)
+                net_w, net_h = 384, 384
+                resize_mode = 'upper_bound'
+                normalization = NormalizeImage(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            elif midas_model == MidasModel.MIDAS_V21_SMALL:
+                model = MidasNet_small(model_path, features=64, backbone="efficientnet_lite3", exportable=True,
+                                       non_negative=True, blocks={'expand': True})
+                net_w, net_h = 256, 256
+                resize_mode = 'upper_bound'
+                normalization = NormalizeImage(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+            cuda = torch.device('cuda')
+            model = model.to(device)
+            if device == cuda: model = model.to(memory_format=torch.channels_last)
+            model.eval()
+
+            transform = Compose([
+                Resize(
+                    net_w,
+                    net_h,
+                    resize_target=None,
+                    keep_aspect_ratio=True,
+                    ensure_multiple_of=32,
+                    resize_method=resize_mode,
+                    image_interpolation_method=cv2.INTER_CUBIC,
+                ),
+                normalization,
+                PrepareForNet(),
+            ])
+
+            with torch.no_grad(), autocast():
+                for fn in tqdm(list(self.workspace.frames_cache.iterdir())):  # TODO: make batch for speedup
+                    if state.interrupted: break
+
+                    im = get_im(fn, mode='RGB')  # [H, W, C], float32
+                    X_np = transform({'image': im})['image']  # [C, maxH, maxW], float32
+                    X = torch.from_numpy(X_np).to(device).unsqueeze(0)  # [B=1, C, maxH, maxW], float32
+                    if device == cuda: X = X.to(memory_format=torch.channels_last)
+
+                    pred = model.forward(X)
+
+                    depth = F.interpolate(pred.unsqueeze(1), size=im.shape[:2], mode='bicubic', align_corners=False)
+                    depth = depth.squeeze().cpu().numpy().astype(dtype)  # [H, W], float32
+                    vmin, vmax = depth.min(), depth.max()
+                    if vmax - vmin > np.finfo(depth.dtype).eps:
+                        depth_n = (depth - vmin) / (vmax - vmin)
+                    else:
+                        depth_n = np.zeros_like(depth)
+                    depth_n = np.expand_dims(depth_n, axis=-1)  # [H, W, C=1]
+
+                    img = im_to_img(depth_n)
+                    img.save(self.workspace.depth_cache / f'{Path(fn).stem}.png')
+
+            return RetCode.INFO, f'depth_masks: {get_folder_file_count(self.workspace.depth_cache)}'
+        except KeyboardInterrupt:
+            return RetCode.WARN, 'interrupted by Ctrl+C'
+        except Exception as e:
+            print(e)
+            return RetCode.ERROR, str(e)
+        finally:
+            if model in locals():
+                del model
+
+            torch_gc()
+            gc.collect()
+
+    @_task
+    def tags_extract(self, topk=32) -> TaskResponse:
+        if not self.workspace.frames_cache.exists():
+            return RetCode.ERROR, f'frames folder not found: {self.workspace.frames_cache}'
+
+        if self.workspace.tags_cache.exists():
+            if not self.allow_overwrite:
+                return RetCode.WARN, self._task_ignore_str()
+
+            self.workspace.tags_cache.unlink()
+
+        try:
+            tags: Dict[str, str] = {}
+            deepbooru_model.start()
+            for fp in tqdm(sorted(self.workspace.frames_cache.iterdir())):
+                img = get_img(fp, mode='RGB')
+                tags[fp.name] = deepbooru_model.tag_multi(img)
+
+            tags_flatten = []
+            for prompt in tags.values():
+                tags_flatten.extend([t.strip() for t in prompt.split(',')])
+            tags_topk = ', '.join([t for t, c in Counter(tags_flatten).most_common(topk)])
+
+            with self.workspace.tags_cache.open('w') as fh:
+                json.dump(tags, fh, indent=2, ensure_ascii=False)
+
+            with self.workspace.tags_topk_cache.open('w') as fh:
+                fh.write(tags_topk)
+
+            return RetCode.INFO, f'prompts: {len(tags)}, top-{topk} freq tags: {tags_topk}'
+        except KeyboardInterrupt:
+            return RetCode.WARN, 'interrupted by Ctrl+C'
+        except Exception as e:
+            print(e)
+            return RetCode.ERROR, str(e)
+        finally:
+            deepbooru_model.model.to(cpu)
+            torch_gc()
+            gc.collect()
+
+    @_task
+    def resr_generation(self, resr_model: str) -> TaskResponse:
+        if not self.workspace.images_cache.exists():
+            return RetCode.ERROR, f'img2img folder not found: {self.workspace.images_cache}'
+
+        if self.workspace.resr_cache.exists():
+            if not self.allow_overwrite:
+                return RetCode.WARN, self._task_ignore_str()
+
+            shutil.rmtree(self.workspace.resr_cache)
+
+        self.workspace.resr_cache.mkdir()
+
+        try:
+            try:
+                m = Regex('-x(\d)').search(resr_model).groups()
+                resr_ratio = int(m[0])
+            except:
+                print('>> cannot parse `resr_ratio` form model name, defaults to 2')
+                resr_ratio = 2
+
+            self._run_subprocess(f'"{RESR_BIN}" -v -s {resr_ratio} -n {resr_model} -i "{self.workspace.images_cache}" -o "{self.workspace.resr_cache}"')
+
+            return RetCode.INFO, f'upscaled: {get_folder_file_count(self.workspace.resr_cache)}'
+        except KeyboardInterrupt:
+            return RetCode.WARN, 'interrupted by Ctrl+C'
+        except Exception as e:
+            print(e)
+            return RetCode.ERROR, str(e)
+
+    @_task
+    def rife_generation(self, rife_model: str, rife_ratio: float, extract_fmt: str) -> TaskResponse:
+        if not self.workspace.resr_cache.exists():
+            return RetCode.ERROR, f'resr folder not found: {self.workspace.resr_cache}'
+
+        if self.workspace.rife_cache.exists():
+            if not self.allow_overwrite:
+                return RetCode.WARN, self._task_ignore_str()
+
+            shutil.rmtree(self.workspace.rife_cache)
+
+        self.workspace.rife_cache.mkdir()
+
+        try:
+            n_interp = int(get_folder_file_count(self.workspace.resr_cache) * rife_ratio)
+            self._run_subprocess(f'"{RIFE_BIN}" -v -n {n_interp} -m {rife_model} -f %05d.{extract_fmt} -i "{self.workspace.resr_cache}" -o "{self.workspace.rife_cache}"')
+
+            return RetCode.INFO, f'interpolated: {get_folder_file_count(self.workspace.rife_cache)}'
+        except KeyboardInterrupt:
+            return RetCode.WARN, 'interrupted by Ctrl+C'
+        except Exception as e:
+            print(e)
+            return RetCode.ERROR, str(e)
+
+    @_task
+    def ffmpeg_export(self, export_fmt: str, frame_src: str, extract_fmt: str, extract_fps: float, extract_frame: str,
+                           rife_ratio: float) -> TaskResponse:
+        in_dp = self.workspace.workspace / frame_src
+        if not in_dp.exists():
+            return RetCode.ERROR, f'src folder not found: {in_dp}'
+
+        audio_opts = ''
+        in_fp = self.workspace.audio_cache
+        if self.process_audio and in_fp.exists():
+            audio_opts += f' -i "{in_fp}"'
+
+        out_fp = self.workspace.workspace / f'{WS_SYNTH}-{frame_src}.{export_fmt}'
+        if out_fp.exists():
+            if not self.allow_overwrite:
+                return RetCode.WARN, self._task_ignore_str()
+
+            out_fp.unlink()
+
+        def get_real_fps() -> float:
+            real_fps = None
+
+            n_frames = get_folder_file_count(in_dp)
+            if real_fps is None:  # if video duration available
+                try:
+                    for stream in self.workspace.ffprob_info['streams']:
+                        if stream['codec_type'] == 'video':
+                            real_fps = n_frames / float(stream['duration'])
+                            break
+                except:
+                    pass
+            if real_fps is None:  # if extracted FPS is known
+                if ExtractFrame(extract_frame) == ExtractFrame.FPS:
+                    real_fps = extract_fps * rife_ratio
+            if real_fps is None:  # if video fps available
+                try:
+                    n_inits = get_folder_file_count(self.workspace.workspace / WS_FRAMES)
+                    for stream in self.workspace.ffprob_info['streams']:
+                        if stream['codec_type'] == 'video':
+                            real_fps = float(stream['avg_frame_rate']) * n_frames / n_inits
+                            break
+                except:
+                    pass
+            if real_fps is None:  # default
+                print(f'cannot decide real fps, defaults to extract_fps: {extract_fps}')
+                real_fps = extract_fps
+
+            return real_fps
+
+        def get_ext() -> str:
+            exts = {os.path.splitext(fn)[-1] for fn in os.listdir(in_dp)}
+            if len(exts) > 1:
+                print(f'>> warn: found multiple file extensions in src foulder: {exts}')
+            return list(exts)[0]
+
+        try:
+            try:
+                self._run_subprocess(f'"{FFMPEG_BIN}"{audio_opts} -framerate {get_real_fps()} -i "{in_dp}{os.sep}%05d{get_ext()}" -crf 20 -c:v libx264 -pix_fmt yuv420p "{out_fp}"')
+            except:
+                self._run_subprocess(f'"{FFMPEG_BIN}"{audio_opts} -framerate {get_real_fps()} -i "{in_dp}{os.sep}%05d{get_ext()}" "{out_fp}"')
+
+            return RetCode.INFO, f'filesize: {get_file_size(out_fp):.3f}'
+        except KeyboardInterrupt:
+            return RetCode.WARN, 'interrupted by Ctrl+C'
+        except Exception as e:
+            print(e)
+            return RetCode.ERROR, str(e)
+
+    def _click_interrupt(self) -> GradioRequest:
+        if self.task_subprocess is not None:
+            self.task_subprocess.kill()  # TODO: look like on linux close process without error.
+            self.task_subprocess = None
+
+        state.interrupt()
+
+        self.task_subprocess = None
+
+        return gr_update_status('interrupted', code=RetCode.ERROR)
+
     def run_img2img(self, p: StableDiffusionProcessingImg2Img) -> Tuple[List[PILImage], str]:
         print(f'>> save debug samples to: {p.outpath_samples}')
         proc = self.processer(p)
@@ -536,7 +879,7 @@ class Script(scripts.Script):
         depth_lowcut = self.depth_lowcut
         init_fns = sorted(os.listdir(init_dp))
 
-        motion_dp = self.ws.workspace / WS_MOTION
+        motion_dp = self.workspace.workspace / WS_MOTION
         motion_dp.mkdir(exist_ok=True)
 
         initial_info: str = None
@@ -656,20 +999,14 @@ class Script(scripts.Script):
 
 
 class Workspace:
-    def __init__(self, video_file, working_folder: Path, allow_overwrite: bool, process_audio: bool):
+    def __init__(self, video_file, working_folder: Path):
         video_path = Path(video_file.orig_name)
 
-        self.task_name: Optional[str] = None
-        self.task_subprocess: Optional[Popen] = None
-
-        self.name = video_path.name
+        self.name = video_path.stem
         with video_path.open('rb') as vf:
             self.hash = hashlib.md5(vf.read()).hexdigest()[:16]
 
         self.workspace = working_folder / self.hash
-
-        self.allow_overwrite: bool = allow_overwrite
-        self.process_audio: bool = process_audio
 
         self.ffprob_cache = self.workspace / WS_FFPROBE
         self.frames_cache = self.workspace / WS_FRAMES
@@ -680,14 +1017,14 @@ class Workspace:
 
         self.delta_cache = self.workspace / WS_DFRAME
         self.depth_cache = self.workspace / WS_DEPTH
+        self.tags_cache = self.workspace / WS_TAGS
+        self.tags_topk_cache = self.workspace / WS_TAGS_TOPK
 
         self.images_cache = self.workspace / WS_IMG2IMG
         self.motion_cache = self.workspace / WS_MOTION
 
         self.resr_cache = self.workspace / WS_RESR
         self.rife_cache = self.workspace / WS_RIFE
-        self.tags_cache = self.workspace / WS_TAGS
-        self.tags_topk_cache = self.workspace / WS_TAGS_TOPK
 
         self.synth_cache = self.workspace / WS_SYNTH
 
@@ -711,356 +1048,4 @@ class Workspace:
             self.new = True
 
     def __str__(self):
-        return f"{self.name} - {self.hash}"
-
-    def _run_subprocess(self, cmd: str) -> None:
-        print(f'>> exec: {cmd}')
-        self.task_subprocess = Popen(cmd, shell=True, text=True, encoding='utf-8')
-        self.task_subprocess.wait()
-
-    @task
-    def frames_extract(self, video_file: object, extract_frame: str, extract_fmt: str,
-                       extract_fps: float):
-        if self.frames_cache.exists():
-            if not self.allow_overwrite:
-                return RetCode.WARN, task_ignore_str('extract')
-
-            shutil.rmtree(self.frames_cache)
-
-        self.frames_cache.mkdir()
-
-        self.audio_cache.unlink(missing_ok=True)
-
-        try:
-            # ref:
-            #   - https://ffmpeg.org/ffmpeg.html
-            #   - https://zhuanlan.zhihu.com/p/85895180
-            # ffprobe -i test.mp4 -v quiet -select_streams v -show_entries frame=pkt_pts_time,pict_type
-
-            extract_frame: ExtractFrame = ExtractFrame(extract_frame)
-            if extract_frame == ExtractFrame.FPS:
-                cmd = f'"{FFMPEG_BIN}" -i "{video_file.name}" -an -sn -f image2 -q:v 2 -r {extract_fps} "{self.frames_cache}{os.sep}%05d.{extract_fmt}"'
-            elif extract_frame == ExtractFrame.IPB:
-                cmd = f'"{FFMPEG_BIN}" -i "{video_file.name}" -an -sn -f image2 -q:v 2 -fps_mode vfr "{self.frames_cache}{os.sep}%05d.{extract_fmt}"'
-            else:  # I/P/B
-                cmd = f'"{FFMPEG_BIN}" -i "{video_file.name}" -an -sn -f image2 -q:v 2 -fps_mode vfr -vf "select=eq(pict_type\,{extract_frame.name})" "{self.frames_cache}{os.sep}%05d.{extract_fmt}"'
-            self._run_subprocess(cmd)
-
-            has_audio = 'no'
-            if self.process_audio:
-                for stream in self.ffprob_info['streams']:
-                    if stream['codec_type'] == 'audio':
-                        self._run_subprocess(f'"{FFMPEG_BIN}" -i "{video_file.name}" -vn -sn "{self.audio_cache}"')
-                        has_audio = 'yes'
-                        break
-
-            return RetCode.INFO, f'frames: {get_folder_file_count(self.frames_cache)}, audio: {has_audio}'
-        except KeyboardInterrupt:
-            return RetCode.WARN, 'interrupted by Ctrl+C'
-        except:
-            e = format_exc()
-            print(e)
-            return RetCode.ERROR, e
-
-    @task
-    def frame_delta_extract(self) -> TaskResponse:
-        if not self.frames_cache.exists():
-            return RetCode.ERROR, f'frames folder not found: {self.frames_cache}'
-
-        if self.delta_cache.exists():
-            if not self.allow_overwrite:
-                return RetCode.WARN, task_ignore_str('framedelta')
-
-            shutil.rmtree(self.delta_cache)
-
-        self.delta_cache.mkdir()
-
-        try:
-            fps = list(self.frames_cache.iterdir())
-            im0, im1 = None, get_im(fps[0], mode='RGB')
-            for fp in tqdm(fps[1:]):
-                if state.interrupted:
-                    break
-
-                im0, im1 = im1, get_im(fp, mode='RGB')
-                delta = im1 - im0  # [-1, 1]
-                im = im_shift_01(delta)  # [0, 1]
-                img = im_to_img(im)
-                img.save(self.delta_cache / f'{fp.stem}.png')
-
-            return RetCode.INFO, f'framedelta: {get_folder_file_count(self.delta_cache)}'
-        except KeyboardInterrupt:
-            return RetCode.WARN, 'interrupted by Ctrl+C'
-        except:
-            e = format_exc()
-            print(e)
-            return RetCode.ERROR, e
-        finally:
-            torch_gc()
-            gc.collect()
-
-    @task
-    def frame_depth_extract(self, midas_model) -> TaskResponse:
-        if not self.frames_cache.exists():
-            return RetCode.ERROR, f'frames folder not found: {self.frames_cache}'
-
-        if self.depth_cache.exists():
-            if not self.allow_overwrite:
-                return RetCode.WARN, task_ignore_str('midas')
-
-            shutil.rmtree(self.depth_cache)
-
-        self.depth_cache.mkdir()
-
-        try:
-            urls = {
-                MidasModel.DPT_LARGE: 'https://github.com/intel-isl/DPT/releases/download/1_0/dpt_large-midas-2f21e586.pt',
-                MidasModel.DPT_HYBRID: 'https://github.com/intel-isl/DPT/releases/download/1_0/dpt_hybrid-midas-501f0c75.pt',
-                MidasModel.MIDAS_V21: 'https://github.com/AlexeyAB/MiDaS/releases/download/midas_dpt/midas_v21-f6b98070.pt',
-                MidasModel.MIDAS_V21_SMALL: 'https://github.com/AlexeyAB/MiDaS/releases/download/midas_dpt/midas_v21_small-70d6b9c8.pt',
-            }
-            midas_model: MidasModel = MidasModel(midas_model)
-            url = urls[midas_model]
-            model_path = MIDAS_MODEL_PATH / Path(url).name
-            if not model_path.exists():
-                MIDAS_MODEL_PATH.mkdir(parents=True, exist_ok=True)
-                self._run_subprocess(f'{CURL_BIN} {url} -L -C - -o "{model_path}"')
-
-            if midas_model == MidasModel.DPT_LARGE:
-                model = DPTDepthModel(path=model_path, backbone="vitl16_384", non_negative=True)
-                net_w, net_h = 384, 384
-                resize_mode = 'minimal'
-                normalization = NormalizeImage(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-            elif midas_model == MidasModel.DPT_HYBRID:
-                model = DPTDepthModel(path=model_path, backbone="vitb_rn50_384", non_negative=True)
-                net_w, net_h = 384, 384
-                resize_mode = 'minimal'
-                normalization = NormalizeImage(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-            elif midas_model == MidasModel.MIDAS_V21:
-                model = MidasNet(model_path, non_negative=True)
-                net_w, net_h = 384, 384
-                resize_mode = 'upper_bound'
-                normalization = NormalizeImage(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            elif midas_model == MidasModel.MIDAS_V21_SMALL:
-                model = MidasNet_small(model_path, features=64, backbone="efficientnet_lite3", exportable=True,
-                                       non_negative=True, blocks={'expand': True})
-                net_w, net_h = 256, 256
-                resize_mode = 'upper_bound'
-                normalization = NormalizeImage(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-
-            cuda = torch.device('cuda')
-            model = model.to(device)
-            if device == cuda: model = model.to(memory_format=torch.channels_last)
-            model.eval()
-
-            transform = Compose([
-                Resize(
-                    net_w,
-                    net_h,
-                    resize_target=None,
-                    keep_aspect_ratio=True,
-                    ensure_multiple_of=32,
-                    resize_method=resize_mode,
-                    image_interpolation_method=cv2.INTER_CUBIC,
-                ),
-                normalization,
-                PrepareForNet(),
-            ])
-
-            with torch.no_grad(), autocast():
-                for fn in tqdm(list(self.frames_cache.iterdir())):  # TODO: make batch for speedup
-                    if state.interrupted: break
-
-                    im = get_im(fn, mode='RGB')  # [H, W, C], float32
-                    X_np = transform({'image': im})['image']  # [C, maxH, maxW], float32
-                    X = torch.from_numpy(X_np).to(device).unsqueeze(0)  # [B=1, C, maxH, maxW], float32
-                    if device == cuda: X = X.to(memory_format=torch.channels_last)
-
-                    pred = model.forward(X)
-
-                    depth = F.interpolate(pred.unsqueeze(1), size=im.shape[:2], mode='bicubic', align_corners=False)
-                    depth = depth.squeeze().cpu().numpy().astype(dtype)  # [H, W], float32
-                    vmin, vmax = depth.min(), depth.max()
-                    if vmax - vmin > np.finfo(depth.dtype).eps:
-                        depth_n = (depth - vmin) / (vmax - vmin)
-                    else:
-                        depth_n = np.zeros_like(depth)
-                    depth_n = np.expand_dims(depth_n, axis=-1)  # [H, W, C=1]
-
-                    img = im_to_img(depth_n)
-                    img.save(self.depth_cache / f'{Path(fn).stem}.png')
-
-            return RetCode.INFO, f'depth_masks: {get_folder_file_count(self.depth_cache)}'
-        except KeyboardInterrupt:
-            return RetCode.WARN, 'interrupted by Ctrl+C'
-        except Exception as e:
-            print(e)
-            return RetCode.ERROR, str(e)
-        finally:
-            if model in locals():
-                del model
-
-            torch_gc()
-            gc.collect()
-
-    @task
-    def tags_extract(self, topk=32) -> TaskResponse:
-        if not self.frames_cache.exists():
-            return RetCode.ERROR, f'frames folder not found: {self.frames_cache}'
-
-        if self.tags_cache.exists():
-            if not self.allow_overwrite:
-                return RetCode.WARN, task_ignore_str('deepdanbooru')
-
-            self.tags_cache.unlink()
-
-        try:
-            tags: Dict[str, str] = {}
-            deepbooru_model.start()
-            for fp in tqdm(sorted(self.frames_cache.iterdir())):
-                img = get_img(fp, mode='RGB')
-                tags[fp.name] = deepbooru_model.tag_multi(img)
-
-            tags_flatten = []
-            for prompt in tags.values():
-                tags_flatten.extend([t.strip() for t in prompt.split(',')])
-            tags_topk = ', '.join([t for t, c in Counter(tags_flatten).most_common(topk)])
-
-            with self.tags_cache.open('w') as fh:
-                json.dump(tags, fh, indent=2, ensure_ascii=False)
-
-            with self.tags_topk_cache.open('w') as fh:
-                fh.write(tags_topk)
-
-            return RetCode.INFO, f'prompts: {len(tags)}, top-{topk} freq tags: {tags_topk}'
-        except KeyboardInterrupt:
-            return RetCode.WARN, 'interrupted by Ctrl+C'
-        except Exception as e:
-            print(e)
-            return RetCode.ERROR, str(e)
-        finally:
-            deepbooru_model.model.to(cpu)
-            torch_gc()
-            gc.collect()
-
-    @task
-    def resr_generation(self, resr_model: str) -> TaskResponse:
-        if not self.images_cache.exists():
-            return RetCode.ERROR, f'img2img folder not found: {self.images_cache}'
-
-        if self.resr_cache.exists():
-            if not self.allow_overwrite:
-                return RetCode.WARN, task_ignore_str('resr')
-
-            shutil.rmtree(self.resr_cache)
-
-        self.resr_cache.mkdir()
-
-        try:
-            try:
-                m = Regex('-x(\d)').search(resr_model).groups()
-                resr_ratio = int(m[0])
-            except:
-                print('>> cannot parse `resr_ratio` form model name, defaults to 2')
-                resr_ratio = 2
-
-            self._run_subprocess(f'"{RESR_BIN}" -v -s {resr_ratio} -n {resr_model} -i "{self.images_cache}" -o "{self.resr_cache}"')
-
-            return RetCode.INFO, f'upscaled: {get_folder_file_count(self.resr_cache)}'
-        except KeyboardInterrupt:
-            return RetCode.WARN, 'interrupted by Ctrl+C'
-        except Exception as e:
-            print(e)
-            return RetCode.ERROR, str(e)
-
-    @task
-    def rife_generation(self, rife_model: str, rife_ratio: float, extract_fmt: str) -> TaskResponse:
-        if not self.resr_cache.exists():
-            return RetCode.ERROR, f'resr folder not found: {self.resr_cache}'
-
-        if self.rife_cache.exists():
-            if not self.allow_overwrite:
-                return RetCode.WARN, task_ignore_str('rife')
-
-            shutil.rmtree(self.rife_cache)
-
-        self.rife_cache.mkdir()
-
-        try:
-            n_interp = int(get_folder_file_count(self.resr_cache) * rife_ratio)
-            self._run_subprocess(f'"{RIFE_BIN}" -v -n {n_interp} -m {rife_model} -f %05d.{extract_fmt} -i "{self.resr_cache}" -o "{self.rife_cache}"')
-
-            return RetCode.INFO, f'interpolated: {get_folder_file_count(self.rife_cache)}'
-        except KeyboardInterrupt:
-            return RetCode.WARN, 'interrupted by Ctrl+C'
-        except Exception as e:
-            print(e)
-            return RetCode.ERROR, str(e)
-
-    @task
-    def ffmpeg_export(self, export_fmt: str, frame_src: str, extract_fmt: str, extract_fps: float, extract_frame: str,
-                           rife_ratio: float) -> TaskResponse:
-        in_dp = self.workspace / frame_src
-        if not in_dp.exists():
-            return RetCode.ERROR, f'src folder not found: {in_dp}'
-
-        audio_opts = ''
-        in_fp = self.audio_cache
-        if self.process_audio and in_fp.exists():
-            audio_opts += f' -i "{in_fp}"'
-
-        out_fp = self.workspace / f'{WS_SYNTH}-{frame_src}.{export_fmt}'
-        if out_fp.exists():
-            if not self.allow_overwrite:
-                return RetCode.WARN, task_ignore_str('export')
-
-            out_fp.unlink()
-
-        def get_real_fps() -> float:
-            real_fps = None
-
-            n_frames = get_folder_file_count(in_dp)
-            if real_fps is None:  # if video duration available
-                try:
-                    for stream in self.ffprob_info['streams']:
-                        if stream['codec_type'] == 'video':
-                            real_fps = n_frames / float(stream['duration'])
-                            break
-                except:
-                    pass
-            if real_fps is None:  # if extracted FPS is known
-                if ExtractFrame(extract_frame) == ExtractFrame.FPS:
-                    real_fps = extract_fps * rife_ratio
-            if real_fps is None:  # if video fps available
-                try:
-                    n_inits = get_folder_file_count(self.workspace / WS_FRAMES)
-                    for stream in self.ffprob_info['streams']:
-                        if stream['codec_type'] == 'video':
-                            real_fps = float(stream['avg_frame_rate']) * n_frames / n_inits
-                            break
-                except:
-                    pass
-            if real_fps is None:  # default
-                print(f'cannot decide real fps, defaults to extract_fps: {extract_fps}')
-                real_fps = extract_fps
-
-            return real_fps
-
-        def get_ext() -> str:
-            exts = {os.path.splitext(fn)[-1] for fn in os.listdir(in_dp)}
-            if len(exts) > 1:
-                print(f'>> warn: found multiple file extensions in src foulder: {exts}')
-            return list(exts)[0]
-
-        try:
-            try:
-                self._run_subprocess(f'"{FFMPEG_BIN}"{audio_opts} -framerate {get_real_fps()} -i "{in_dp}{os.sep}%05d{get_ext()}" -crf 20 -c:v libx264 -pix_fmt yuv420p "{out_fp}"')
-            except:
-                self._run_subprocess(f'"{FFMPEG_BIN}"{audio_opts} -framerate {get_real_fps()} -i "{in_dp}{os.sep}%05d{get_ext()}" "{out_fp}"')
-
-            return RetCode.INFO, f'filesize: {get_file_size(out_fp):.3f}'
-        except KeyboardInterrupt:
-            return RetCode.WARN, 'interrupted by Ctrl+C'
-        except Exception as e:
-            print(e)
-            return RetCode.ERROR, str(e)
+        return f"{self.name}({self.hash})"

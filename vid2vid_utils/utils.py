@@ -10,20 +10,20 @@ from vid2vid_utils.enums import *
 def get_folder_file_count(dp:Union[Path, str]) -> int:
     return len(os.listdir(dp))
 
-test = Path()
-
 def get_file_size(fp:Union[Path, str]) -> float:
     return os.path.getsize(fp) / 2**20
 
 
-def get_workspace_name(fn:str) -> str:
+def get_workspace_name(fn: str) -> str:
     name = fn.replace(' ', '_')
     name = name[:32]        # just make things short
     return Path(name).stem
 
 
 def gr_update_status(text=None, code=RetCode.INFO, task: str = None, ts: float = None) -> GradioRequest:
-    if not text: return gr.HTML.update()
+    if not text:
+        return gr.HTML.update()
+
     safe_text = html.escape(text)
     task_str = f' {task!r}' if task else ''
     ts_str = f' ({ts:.3f}s)' if ts else ''
@@ -36,7 +36,3 @@ def gr_update_status(text=None, code=RetCode.INFO, task: str = None, ts: float =
             value=f'<div style="padding:10px; color:red">Error{task_str}! => {safe_text}</div>'),
     }
     return TEMPLATES[code]()
-
-
-def task_ignore_str(taskname: str) -> str:
-    return f'task "{taskname}" ignored due to cached already exists :)'
