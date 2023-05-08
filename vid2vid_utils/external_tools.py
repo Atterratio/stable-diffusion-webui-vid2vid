@@ -4,6 +4,7 @@ from pathlib import Path
 from traceback import print_exc
 from typing import List
 
+
 SD_WEBUI_PATH = Path.cwd()  # should be <sd-webui> root abspath
 
 RESR_BIN = Path('realesrgan-ncnn-vulkan')

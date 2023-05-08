@@ -30,7 +30,7 @@ WS_RIFE = 'rife'
 WS_SYNTH = 'synth'  # stem
 
 
-LABEL_CACHE_FOLDER = 'Cache Folder'
+LABEL_WORKING_FOLDER = 'Working Folder'
 LABEL_WORKSPACE_FOLDER = 'Workspace Folder'
 LABEL_VIDEO_FILE = 'Input video file'
 LABEL_VIDEO_INFO = 'Video media info'
@@ -79,10 +79,10 @@ CHOICES_FRAME_SRC = [
     WS_RIFE,
 ]
 
-INIT_CACHE_FOLDER = OUTPUT_PATH / 'sd-webui-vid2vid'
-INIT_CACHE_FOLDER.mkdir(exist_ok=True)
+INIT_WORKING_FOLDER = OUTPUT_PATH / 'sd-webui-vid2vid'
+INIT_WORKING_FOLDER.mkdir(exist_ok=True)
 
-DEFAULT_CACHE_FOLDER = __(LABEL_CACHE_FOLDER, str(INIT_CACHE_FOLDER))
+DEFAULT_WORKING_FOLDER = __(LABEL_WORKING_FOLDER, str(INIT_WORKING_FOLDER))
 DEFAULT_EXTRACT_FRAME = __(LABEL_EXTRACT_FRAME, ExtractFrame.FPS.value)
 DEFAULT_EXTRACT_FMT = __(LABEL_EXTRACT_FMT, ImageFormat.PNG.value)
 DEFAULT_EXTRACT_FPS = __(LABEL_EXTRACT_FPS, 12)
@@ -111,7 +111,7 @@ DEFAULT_PROCESS_AUDIO = __(LABEL_PROCESS_AUDIO, False)
 EXTRACT_HELP_HTML = '''
     <div>
       <h4> Create a workspace to start everything: 🤗 </h4>
-      <p> 1. enter a path for <strong>Cache Folder</strong> to store all things </p>
+      <p> 1. enter a path for <strong>Script Working Folder</strong> to store all things </p>
       <p> 2. open a video file, this will auto-create or reuse a <strong>Worspace Folder</strong> </p>
       <p> 3. check "Process audio" if you want to keep the audio track </p>
       <p> 4. just extract the frames </p>

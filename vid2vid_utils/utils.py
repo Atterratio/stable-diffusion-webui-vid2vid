@@ -22,13 +22,6 @@ def get_workspace_name(fn:str) -> str:
     return Path(name).stem
 
 
-def sh(cmd:str) -> None:
-    global cur_proc
-    print(f'>> exec: {cmd}')
-    cur_proc = Popen(cmd, shell=True, text=True, encoding='utf-8')
-    cur_proc.wait()
-
-
 def gr_update_status(text=None, code=RetCode.INFO, task: str = None, ts: float = None) -> GradioRequest:
     if not text: return gr.HTML.update()
     safe_text = html.escape(text)
